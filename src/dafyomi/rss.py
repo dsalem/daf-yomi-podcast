@@ -75,7 +75,9 @@ def build_feed(session: Session, feed_base_url: str, cover_art_url: str) -> byte
     _itunes(owner, "name", SHOW.author)
     _itunes(owner, "email", SHOW.email)
 
-    cat = _itunes(channel, "category", text=SHOW.category_main)
+    # Apple/Spotify expect the category name in the `text=` attribute only —
+    # not in the element's inner content.
+    cat = _itunes(channel, "category")
     cat.set("text", SHOW.category_main)
     sub = _itunes(cat, "category")
     sub.set("text", SHOW.category_sub)

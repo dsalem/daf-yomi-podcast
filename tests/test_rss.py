@@ -75,6 +75,9 @@ def test_feed_has_required_channel_metadata(session_with_episode) -> None:
     assert cat is not None and cat.get("text") == "Religion & Spirituality"
     sub = cat.find(f"{ITUNES}category")
     assert sub is not None and sub.get("text") == "Judaism"
+    # Per Apple/Spotify spec, category name lives ONLY in the `text=` attribute,
+    # not in the element's inner text content.
+    assert (cat.text or "").strip() == ""
 
     image = ch.find(f"{ITUNES}image")
     assert image is not None and image.get("href") == "https://example.com/cover.jpg"
