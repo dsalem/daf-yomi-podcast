@@ -1,8 +1,15 @@
-"""Internet Archive uploader. Wraps the `internetarchive` Python package."""
+"""Internet Archive uploader. Wraps the `internetarchive` Python package.
+
+Rate-limit handling: IA's anti-spam system flags new accounts that bulk-upload
+many similar items quickly. We mitigate by sleeping between uploads
+(IA_UPLOAD_DELAY_SECONDS, default 60s) and by stopping the chunk cleanly when
+IA returns a rate-limit error so the operator can decide what to do.
+"""
 
 from __future__ import annotations
 
 import os
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -11,6 +18,21 @@ from sqlalchemy.orm import Session
 
 from .models import Episode
 from .show_config import SHOW
+
+# Substrings IA includes in rate-limit / spam-flag responses.
+_RATE_LIMIT_SIGNATURES = (
+    "reduce your request rate",
+    "appears to be spam",
+    "too many requests",
+    "slow down",
+)
+
+
+class IARateLimited(RuntimeError):
+    """Raised when IA returns a rate-limit / spam-flag response.
+
+    Caller is expected to stop the current chunk and surface the error.
+    """
 
 
 def ia_identifier(season_number: int, masechet_slug: str, daf: int) -> str:
@@ -75,20 +97,29 @@ def upload_one(ep: Episode, dry_run: bool = False) -> tuple[str, str]:
         )
 
     metadata = _make_metadata(ep)
-    responses = upload(
-        identifier,
-        files={remote_filename: str(src)},
-        metadata=metadata,
-        access_key=access_key,
-        secret_key=secret_key,
-        retries=3,
-        retries_sleep=10,
-    )
+    try:
+        responses = upload(
+            identifier,
+            files={remote_filename: str(src)},
+            metadata=metadata,
+            access_key=access_key,
+            secret_key=secret_key,
+            retries=3,
+            retries_sleep=10,
+        )
+    except Exception as exc:
+        msg = str(exc).lower()
+        if any(sig in msg for sig in _RATE_LIMIT_SIGNATURES):
+            raise IARateLimited(str(exc)) from exc
+        raise
     for r in responses:
         # Each response is a requests.Response. Non-2xx → raise.
         if not getattr(r, "ok", True):
+            body = (r.text or "")[:500]
+            if any(sig in body.lower() for sig in _RATE_LIMIT_SIGNATURES):
+                raise IARateLimited(body)
             raise RuntimeError(
-                f"IA upload for {identifier} failed: HTTP {r.status_code} {r.text[:200]}"
+                f"IA upload for {identifier} failed: HTTP {r.status_code} {body}"
             )
     return identifier, url
 
@@ -105,9 +136,30 @@ def upload_pending(
     if limit is not None:
         q = q.limit(limit)
 
+    delay = int(os.environ.get("IA_UPLOAD_DELAY_SECONDS", "60"))
+
     count = 0
-    for ep in session.scalars(q).all():
-        identifier, url = upload_one(ep, dry_run=dry_run)
+    eps = session.scalars(q).all()
+    total = len(eps)
+    for i, ep in enumerate(eps):
+        try:
+            identifier, url = upload_one(ep, dry_run=dry_run)
+        except IARateLimited as exc:
+            print(
+                f"\n[rate-limit] IA flagged the request rate while uploading "
+                f"{ep.title_en}.\n"
+                f"  Message: {str(exc)[:300]}\n"
+                f"  Stopping chunk at {count}/{total}. The next call to "
+                f"`dafyomi upload` will resume from this episode.\n"
+                f"  Mitigations:\n"
+                f"   1. Increase IA_UPLOAD_DELAY_SECONDS in .env (currently {delay}s).\n"
+                f"   2. Email info@archive.org explaining the bulk back-catalog "
+                f"use case and ask for a whitelist.\n"
+                f"   3. Wait a few hours before retrying — IA's spam flag often "
+                f"clears on its own.\n"
+            )
+            return count
+
         if dry_run:
             print(f"[dry-run] would upload {ep.title_en} -> {url}")
         else:
@@ -117,4 +169,9 @@ def upload_pending(
             session.add(ep)
             session.commit()
         count += 1
+
+        # Throttle so IA's anti-spam doesn't flag us again. Skip the sleep
+        # after the very last upload of the chunk.
+        if not dry_run and delay > 0 and i < total - 1:
+            time.sleep(delay)
     return count
