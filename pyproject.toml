@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dafyomi"
+version = "0.1.0"
+description = "Bulk-publish a Daf Yomi shiur back-catalog to Internet Archive and generate a podcast RSS feed."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Daf Yomi Podcast" },
+]
+license = { text = "MIT" }
+dependencies = [
+    "SQLAlchemy>=2.0",
+    "internetarchive>=4.0",
+    "mutagen>=1.47",
+    "typer>=0.12",
+    "python-dotenv>=1.0",
+    "rich>=13.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[project.scripts]
+dafyomi = "dafyomi.cli:app"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
