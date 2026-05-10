@@ -4,12 +4,19 @@ Rate-limit handling: IA's anti-spam system flags new accounts that bulk-upload
 many similar items quickly. We mitigate by sleeping between uploads
 (IA_UPLOAD_DELAY_SECONDS, default 60s) and by stopping the chunk cleanly when
 IA returns a rate-limit error so the operator can decide what to do.
+
+Transient-error handling: IA sometimes returns errors (e.g. "code =
+not_available", "Please try again") *after* having actually accepted the
+upload. We treat those as soft-errors: re-check the item via IA's metadata
+API, and if the mp3 is present, treat the upload as successful.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import time
+import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -33,6 +40,35 @@ class IARateLimited(RuntimeError):
 
     Caller is expected to stop the current chunk and surface the error.
     """
+
+
+# Substrings that indicate a transient/soft error; we re-check IA metadata
+# rather than treating these as outright failures.
+_TRANSIENT_SIGNATURES = (
+    "please try again",
+    "code = not_available",
+    "service unavailable",
+    "internal server error",
+    "bucket name is not available",
+    "bucket namespace",
+    "503",
+    "504",
+)
+
+
+def _ia_item_has_audio(identifier: str) -> bool:
+    """Return True if IA reports an item with at least one mp3 file."""
+    url = f"https://archive.org/metadata/{identifier}"
+    try:
+        with urllib.request.urlopen(url, timeout=15) as r:
+            data = json.load(r)
+    except Exception:
+        return False
+    if not data.get("metadata"):
+        return False
+    return any(
+        f.get("name", "").endswith(".mp3") for f in data.get("files", [])
+    )
 
 
 def ia_identifier(season_number: int, masechet_slug: str, daf: int) -> str:
@@ -111,6 +147,12 @@ def upload_one(ep: Episode, dry_run: bool = False) -> tuple[str, str]:
         msg = str(exc).lower()
         if any(sig in msg for sig in _RATE_LIMIT_SIGNATURES):
             raise IARateLimited(str(exc)) from exc
+        # IA often returns errors AFTER having accepted the upload. Re-check
+        # the item — if the mp3 is there, we're good.
+        if any(sig in msg for sig in _TRANSIENT_SIGNATURES):
+            time.sleep(5)
+            if _ia_item_has_audio(identifier):
+                return identifier, url
         raise
     for r in responses:
         # Each response is a requests.Response. Non-2xx → raise.
@@ -118,6 +160,10 @@ def upload_one(ep: Episode, dry_run: bool = False) -> tuple[str, str]:
             body = (r.text or "")[:500]
             if any(sig in body.lower() for sig in _RATE_LIMIT_SIGNATURES):
                 raise IARateLimited(body)
+            if any(sig in body.lower() for sig in _TRANSIENT_SIGNATURES):
+                time.sleep(5)
+                if _ia_item_has_audio(identifier):
+                    return identifier, url
             raise RuntimeError(
                 f"IA upload for {identifier} failed: HTTP {r.status_code} {body}"
             )
@@ -139,26 +185,51 @@ def upload_pending(
     delay = int(os.environ.get("IA_UPLOAD_DELAY_SECONDS", "60"))
 
     count = 0
+    skipped: list[str] = []
     eps = session.scalars(q).all()
     total = len(eps)
     for i, ep in enumerate(eps):
-        try:
-            identifier, url = upload_one(ep, dry_run=dry_run)
-        except IARateLimited as exc:
+        # Retry transient failures (bucket-not-available, 503, etc.) once
+        # with a longer backoff before giving up on this episode.
+        identifier: str | None = None
+        url: str | None = None
+        last_exc: Exception | None = None
+        for attempt in range(2):
+            try:
+                identifier, url = upload_one(ep, dry_run=dry_run)
+                break
+            except IARateLimited as exc:
+                print(
+                    f"\n[rate-limit] IA flagged the request rate while uploading "
+                    f"{ep.title_en}.\n"
+                    f"  Message: {str(exc)[:300]}\n"
+                    f"  Stopping chunk at {count}/{total}. The next call to "
+                    f"`dafyomi upload` will resume from this episode.\n"
+                    f"  Mitigations:\n"
+                    f"   1. Increase IA_UPLOAD_DELAY_SECONDS in .env (currently {delay}s).\n"
+                    f"   2. Email info@archive.org explaining the bulk back-catalog "
+                    f"use case and ask for a whitelist.\n"
+                    f"   3. Wait a few hours before retrying — IA's spam flag often "
+                    f"clears on its own.\n"
+                )
+                return count
+            except Exception as exc:
+                last_exc = exc
+                if attempt == 0:
+                    print(
+                        f"  [transient] {ep.title_en}: {str(exc)[:200]} — "
+                        f"sleeping 60s and retrying once"
+                    )
+                    time.sleep(60)
+
+        if identifier is None or url is None:
+            # Both attempts failed — log, skip this episode, continue.
             print(
-                f"\n[rate-limit] IA flagged the request rate while uploading "
-                f"{ep.title_en}.\n"
-                f"  Message: {str(exc)[:300]}\n"
-                f"  Stopping chunk at {count}/{total}. The next call to "
-                f"`dafyomi upload` will resume from this episode.\n"
-                f"  Mitigations:\n"
-                f"   1. Increase IA_UPLOAD_DELAY_SECONDS in .env (currently {delay}s).\n"
-                f"   2. Email info@archive.org explaining the bulk back-catalog "
-                f"use case and ask for a whitelist.\n"
-                f"   3. Wait a few hours before retrying — IA's spam flag often "
-                f"clears on its own.\n"
+                f"  [skip] {ep.title_en}: {str(last_exc)[:200]} — "
+                f"skipping; rerun `dafyomi upload` later to retry"
             )
-            return count
+            skipped.append(ep.title_en)
+            continue
 
         if dry_run:
             print(f"[dry-run] would upload {ep.title_en} -> {url}")
@@ -174,4 +245,11 @@ def upload_pending(
         # after the very last upload of the chunk.
         if not dry_run and delay > 0 and i < total - 1:
             time.sleep(delay)
+
+    if skipped:
+        print(
+            f"\nSkipped {len(skipped)} episode(s) due to transient errors: "
+            f"{', '.join(skipped[:10])}"
+            + ("..." if len(skipped) > 10 else "")
+        )
     return count
