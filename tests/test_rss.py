@@ -69,7 +69,7 @@ def test_feed_has_required_channel_metadata(session_with_episode) -> None:
 
     owner = ch.find(f"{ITUNES}owner")
     assert owner is not None
-    assert owner.find(f"{ITUNES}email").text == "joesalem7@gmail.com"
+    assert owner.find(f"{ITUNES}email").text == "joesalem7@aol.com"
 
     cat = ch.find(f"{ITUNES}category")
     assert cat is not None and cat.get("text") == "Religion & Spirituality"

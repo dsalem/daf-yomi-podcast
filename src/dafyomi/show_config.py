@@ -26,7 +26,7 @@ SHOW = ShowConfig(
         "Daf Yomi explained in English, text based, "
         "explanation based on Rashi, Sephardic reading."
     ),
-    email="joesalem7@gmail.com",
+    email="joesalem7@aol.com",
     language="en",
     category_main="Religion & Spirituality",
     category_sub="Judaism",
