@@ -20,7 +20,7 @@ class ShowConfig:
 
 
 SHOW = ShowConfig(
-    title="Daf Yomi",
+    title="Daf Yomi Archive",
     author="Rabbi Joseph Salem",
     description=(
         "Daf Yomi explained in English, text based, "

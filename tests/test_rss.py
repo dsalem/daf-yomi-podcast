@@ -61,7 +61,7 @@ def test_feed_has_required_channel_metadata(session_with_episode) -> None:
     ch = root.find("channel")
     assert ch is not None
 
-    assert ch.findtext("title") == "Daf Yomi"
+    assert ch.findtext("title") == "Daf Yomi Archive"
     assert ch.findtext("language") == "en"
     assert ch.find(f"{ITUNES}author").text == "Rabbi Joseph Salem"
     assert ch.find(f"{ITUNES}type").text == "episodic"
