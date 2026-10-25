@@ -63,12 +63,14 @@ def test_feed_has_required_channel_metadata(session_with_episode) -> None:
 
     assert ch.findtext("title") == "Daf Yomi Archive"
     assert ch.findtext("language") == "en"
-    assert ch.find(f"{ITUNES}author").text == "Rabbi Joseph Salem"
+    assert ch.find(f"{ITUNES}author").text == "Joseph Salem"
+    assert ch.findtext("copyright") == "© Joseph Salem"
     assert ch.find(f"{ITUNES}type").text == "episodic"
     assert ch.find(f"{ITUNES}explicit").text == "false"
 
     owner = ch.find(f"{ITUNES}owner")
     assert owner is not None
+    assert owner.find(f"{ITUNES}name").text == "Joseph Salem"
     assert owner.find(f"{ITUNES}email").text == "joesalem7@aol.com"
 
     cat = ch.find(f"{ITUNES}category")
@@ -99,6 +101,7 @@ def test_episode_has_required_itunes_fields(session_with_episode) -> None:
     assert item is not None
 
     assert item.findtext("title") == "Berachot 47"
+    assert item.find(f"{ITUNES}author").text == "Joseph Salem"
     enclosure = item.find("enclosure")
     assert enclosure is not None
     assert enclosure.get("type") == "audio/mpeg"

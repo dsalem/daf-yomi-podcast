@@ -4,7 +4,7 @@ Bulk-publish a back-catalog of daf-yomi shiurim to **Internet Archive** (free,
 permanent audio hosting) and generate a **podcast RSS feed** that Spotify,
 Apple Podcasts, Overcast, and every other podcast app can ingest.
 
-Built for the "Daf Yomi" show by Rabbi Joseph Salem: 2,300 m4a recordings
+Built for the "Daf Yomi" show by Joseph Salem: 2,300 m4a recordings
 from Masechet Berachot through Chullin, sitting in Google Drive, that need to
 become a real podcast.
 

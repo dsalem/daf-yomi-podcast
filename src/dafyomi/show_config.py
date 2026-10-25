@@ -21,7 +21,7 @@ class ShowConfig:
 
 SHOW = ShowConfig(
     title="Daf Yomi Archive",
-    author="Rabbi Joseph Salem",
+    author="Joseph Salem",
     description=(
         "Daf Yomi explained in English, text based, "
         "explanation based on Rashi, Sephardic reading."
@@ -31,6 +31,6 @@ SHOW = ShowConfig(
     category_main="Religion & Spirituality",
     category_sub="Judaism",
     explicit=False,
-    copyright="© Rabbi Joseph Salem",
+    copyright="© Joseph Salem",
     type="episodic",
 )
